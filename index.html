@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bakery OS｜手動在庫＋音声アラート</title>
+
+<style>
+:root{
+  --accent:#d2691e;
+  --danger:#ff4757;
+  --bg:#f6f7fb;
+  --card:#ffffff;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  background:var(--bg);
+  padding:12px 12px 100px;
+}
+header{
+  display:flex;
+  justify-content:space-between;
+  font-size:.85rem;
+  font-weight:bold;
+  margin-bottom:10px;
+}
+.badge{
+  background:#6c5ce7;
+  color:#fff;
+  padding:4px 10px;
+  border-radius:999px;
+}
+
+.audio-btn{
+  width:100%;
+  margin-bottom:10px;
+  background:#1e90ff;
+  color:#fff;
+  border:none;
+  border-radius:12px;
+  padding:10px;
+  font-weight:bold;
+}
+
+.card{
+  background:var(--card);
+  border-radius:16px;
+  padding:14px;
+  margin-bottom:12px;
+  box-shadow:0 6px 20px rgba(0,0,0,.08);
+}
+.card.critical{border:2px solid var(--danger)}
+
+.row{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+}
+.cat{font-size:.7rem;color:#777}
+.name{font-size:1.1rem;font-weight:900}
+.qty{font-size:1.2rem;font-weight:900}
+
+.track{
+  background:#eee;
+  height:12px;
+  border-radius:6px;
+  margin:10px 0;
+}
+.fill{height:100%;border-radius:6px}
+
+input[type="number"]{
+  width:100%;
+  padding:8px;
+  border-radius:8px;
+  border:1px solid #ccc;
+  font-size:1rem;
+  margin-top:6px;
+}
+
+button.update{
+  width:100%;
+  margin-top:8px;
+  border:none;
+  border-radius:12px;
+  padding:10px;
+  font-weight:bold;
+}
+
+.toast{
+  position:fixed;
+  bottom:80px;
+  left:50%;
+  transform:translateX(-50%);
+  background:#111;
+  color:#fff;
+  padding:10px 14px;
+  border-radius:999px;
+  font-size:.85rem;
+  opacity:0;
+  transition:.2s;
+}
+.toast.show{opacity:1}
+</style>
+</head>
+
+<body>
+
+<header>
+  <div><span class="badge">AI稼働中</span> 手動在庫管理</div>
+  <div>音声対応</div>
+</header>
+
+<button id="enableSpeech" class="audio-btn">
+🔊 音声読み上げを有効にする
+</button>
+
+<div id="dashboard"></div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ===== STATE ===== */
+const state = {
+  items: [
+    { id:"flour", name:"小麦粉", cat:"基本", current:7.2, weekly:30, unit:"kg", spoken:false },
+    { id:"milk", name:"牛乳", cat:"乳製品", current:6, weekly:20, unit:"L", spoken:false },
+    { id:"butter", name:"バター", cat:"乳製品", current:8.5, weekly:10, unit:"kg", spoken:false },
+    { id:"yeast", name:"パン酵母", cat:"基本", current:450, weekly:500, unit:"g", spoken:false }
+  ]
+};
+
+let speechEnabled = false;
+
+/* ===== HELPERS ===== */
+const ratio = i => i.current / i.weekly;
+
+const toast = msg => {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(t._id);
+  t._id = setTimeout(() => t.classList.remove("show"), 2000);
+};
+
+/* ===== ENABLE SPEECH ===== */
+document.getElementById("enableSpeech").onclick = () => {
+  speechEnabled = true;
+
+  // iPhone対策：空読み上げで許可を通す
+  const u = new SpeechSynthesisUtterance(" ");
+  speechSynthesis.speak(u);
+
+  toast("音声読み上げを有効にしました");
+};
+
+/* ===== 個別在庫 音声チェック（1/3以下） ===== */
+function checkItemSpeech(i){
+  if(!speechEnabled) return;
+
+  const isLow = (i.current / i.weekly) <= (1 / 3);
+
+  // 1/3以下になった瞬間に1回だけ鳴る
+  if(isLow && !i.spoken){
+    const msg = new SpeechSynthesisUtterance(
+      `${i.name}の在庫が少なくなっています`
+    );
+    msg.lang = "ja-JP";
+    msg.rate = 1;
+    speechSynthesis.speak(msg);
+    i.spoken = true;
+  }
+
+  // 在庫が回復したらリセット
+  if(!isLow && i.spoken){
+    i.spoken = false;
+  }
+}
+
+/* ===== RENDER ===== */
+function renderDashboard(){
+  const el = document.getElementById("dashboard");
+  el.innerHTML = "";
+
+  state.items.forEach(i => {
+    checkItemSpeech(i);
+
+    const r = ratio(i);
+    const critical = r <= (1/3);
+
+    const card = document.createElement("div");
+    card.className = "card" + (critical ? " critical" : "");
+    card.innerHTML = `
+      <div class="row">
+        <div>
+          <div class="cat">${i.cat}</div>
+          <div class="name">${i.name}</div>
+        </div>
+        <div class="qty">${i.current}${i.unit}</div>
+      </div>
+
+      <div class="track">
+        <div class="fill"
+          style="width:${Math.min(r*100,100)}%;
+          background:${critical?'var(--danger)':'var(--accent)'}">
+        </div>
+      </div>
+
+      <label>在庫数を入力</label>
+      <input type="number" step="0.1" value="${i.current}" id="input-${i.id}">
+
+      <button class="update" onclick="updateStock('${i.id}')">更新</button>
+    `;
+    el.appendChild(card);
+  });
+}
+
+/* ===== UPDATE ===== */
+function updateStock(id){
+  const i = state.items.find(x => x.id === id);
+  const input = document.getElementById("input-" + id);
+  const val = parseFloat(input.value);
+
+  if(isNaN(val) || val < 0){
+    alert("正しい数値を入力してください");
+    return;
+  }
+
+  i.current = val;
+  toast(`${i.name}の在庫を更新しました`);
+  renderDashboard();
+}
+
+/* ===== INIT ===== */
+renderDashboard();
+</script>
+</body>
+</html>
